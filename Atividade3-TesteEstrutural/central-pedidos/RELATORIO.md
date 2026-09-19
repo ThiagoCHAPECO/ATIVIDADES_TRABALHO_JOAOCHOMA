@@ -7,7 +7,90 @@ Integrantes: Thiago Gimenes e _________________
 
 ---
 
-## 1. Grafo de chamadas de `PedidoService.fechar`
+## 1. Relacionamento entre classes
+
+```mermaid
+classDiagram
+    class PedidoService {
+        -PoliticaDesconto descontos
+        -CalculadoraFrete fretes
+        -AnaliseRisco risco
+        -PagamentoService pagamentos
+        +fechar(Pedido, Cliente) ResultadoPedido
+        -semCobranca(String) ResultadoPedido
+    }
+    class PoliticaDesconto {
+        +calcular(Cliente, long subtotal, String cupom) long
+    }
+    class CalculadoraFrete {
+        +calcular(Pedido, Cliente, long liquido) long
+    }
+    class AnaliseRisco {
+        +avaliar(Cliente, long total, boolean expresso) String
+    }
+    class PagamentoService {
+        -ProcessadorPagamento processador
+        +pagar(long total, int maxTentativas) boolean
+    }
+    class ProcessadorPagamento {
+        <<interface>>
+        +autorizar(long totalCentavos) boolean
+    }
+    class Pedido {
+        <<record>>
+        +List~ItemPedido~ itens
+        +String uf
+        +boolean expresso
+        +String cupom
+        +subtotalCentavos() long
+        +pesoGramas() int
+        +temFragil() boolean
+        +estoqueSuficiente() boolean
+    }
+    class ItemPedido {
+        <<record>>
+        +String sku
+        +long precoCentavos
+        +int quantidade
+        +int estoque
+        +int pesoGramas
+        +boolean fragil
+        +totalCentavos() long
+        +disponivel() boolean
+    }
+    class Cliente {
+        <<record>>
+        +boolean vip
+        +boolean bloqueado
+        +int comprasAnteriores
+    }
+    class ResultadoPedido {
+        <<record>>
+        +String status
+        +long subtotalCentavos
+        +long descontoCentavos
+        +long freteCentavos
+        +long totalCentavos
+    }
+
+    PedidoService *-- PoliticaDesconto : cria
+    PedidoService *-- CalculadoraFrete : cria
+    PedidoService *-- AnaliseRisco : cria
+    PedidoService *-- PagamentoService : cria
+    PagamentoService o-- ProcessadorPagamento : recebe (stub nos testes)
+    Pedido "1" *-- "0..100" ItemPedido : itens
+    PedidoService ..> Pedido : usa
+    PedidoService ..> Cliente : usa
+    PedidoService ..> ResultadoPedido : retorna
+    PoliticaDesconto ..> Cliente : usa
+    CalculadoraFrete ..> Pedido : usa
+    CalculadoraFrete ..> Cliente : usa
+    AnaliseRisco ..> Cliente : usa
+```
+
+`PedidoService` cria e compõe as três regras de negócio e o serviço de pagamento. A única dependência externa é a interface `ProcessadorPagamento`, que é injetada pelo construtor. Nos testes, ela é substituída por um stub (lambda ou classe `StubProcessador`).
+
+## 1.1 Grafo de chamadas de `PedidoService.fechar`
 
 ```mermaid
 flowchart LR
@@ -260,11 +343,34 @@ Testes adicionais (limites, truncamento, iterações e combinações) estão ide
 
 ## 5. Evolução da cobertura
 
-| Etapa | Testes executados | Linhas | Branches | Métodos | Classes | Lacunas e justificativas |
+Cada etapa acrescenta uma classe de teste às anteriores e foi medida com `mvn clean test -Dtest=...` e JaCoCo.
+
+| Etapa | Testes executados | Linhas | Branches | Métodos | Classes | O que o novo teste acrescentou / lacunas restantes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Inicial | 0 | Não medido | Não medido | Não medido | Não medido | Sem testes |
-| Exemplo do professor | 1 | 87/108 (80,6%) | 50/116 (43,1%) | 20/21 (95,2%) | 9/9 | Só o caminho PAGO. `semCobranca` nunca é chamado; validações, cupons, UFs, risco e retentativas não são exercitados |
-| Final | 129 | **108/108 (100%)** | **116/116 (100%)** | **21/21 (100%)** | **9/9** | Nenhuma lacuna de linha ou de branch. As exceções de `catch` e a propagação não aparecem como branches no JaCoCo, mas foram testadas (P5–P7) |
+| E0 - Inicial | 0 | Não medido | Não medido | Não medido | Não medido | Sem testes |
+| E1 - Exemplo do professor | 1 | 87/108 (80,6%) | 50/116 (43,1%) | 20/21 (95,2%) | 9/9 | Só o caminho PAGO. Faltam `semCobranca` e todos os ramos de validação, desconto, frete, risco e retentativa |
+| E2 - + ClienteTest, ItemPedidoTest, PedidoTest | 50 | 89/108 (82,4%) | 69/116 (59,5%) | 20/21 (95,2%) | 9/9 | **+19 branches**: `Cliente`, `ItemPedido` e `Pedido` chegam a 100% (validações, `continue`, `break` e retorno antecipado de `temFragil`) |
+| E3 - + PoliticaDescontoTest | 72 | 97/108 (89,8%) | 86/116 (74,1%) | 20/21 (95,2%) | 9/9 | **+17 branches e +8 linhas**: `PoliticaDesconto` chega a 100% (cupons, `switch`, `default` e teto) |
+| E4 - + CalculadoraFreteTest | 92 | 101/108 (93,5%) | 96/116 (82,8%) | 20/21 (95,2%) | 9/9 | **+10 branches**: `CalculadoraFrete` chega a 100% (todos os `case`, `while` 0 a 3 vezes, gratuidade, VIP, expresso e frágil) |
+| E5 - + AnaliseRiscoTest | 102 | 103/108 (95,4%) | 106/116 (91,4%) | 20/21 (95,2%) | 9/9 | **+10 branches**: `AnaliseRisco` chega a 100%, incluindo `RECUSADO`, que é inviável pelo serviço |
+| E6 - + PagamentoServiceTest | 115 | 106/108 (98,1%) | 111/116 (95,7%) | 20/21 (95,2%) | 9/9 | **+5 branches**: `PagamentoService` chega a 100% (validações e `do/while` com repetição). Falta só `PedidoService`: 5 branches, 2 linhas e o método `semCobranca` |
+| E7 - Final (+ PedidoServiceTest completo) | 129 | **108/108 (100%)** | **116/116 (100%)** | **21/21 (100%)** | **9/9** | **+5 branches e +1 método**: BLOQUEADO, SEM_ESTOQUE, REVISAO, PAGAMENTO_RECUSADO e `semCobranca`. Nenhuma lacuna. As exceções de `catch` e a propagação não aparecem como branches no JaCoCo, mas foram testadas (P5–P7) |
+
+### Evidências (relatório JaCoCo após `mvn clean test`)
+
+Resumo por classe:
+
+![Resumo JaCoCo por classe](evidencias/jacoco-classes.png)
+
+Código colorido de `CalculadoraFrete` (todas as decisões cobertas):
+
+![JaCoCo CalculadoraFrete](evidencias/jacoco-CalculadoraFrete.png)
+
+Código colorido de `PagamentoService` (`do/while` e `try/catch`):
+
+![JaCoCo PagamentoService](evidencias/jacoco-PagamentoService.png)
+
+A pasta `target/` não é versionada (`.gitignore`). Para gerar o relatório completo, execute `mvn clean test` e abra `target/site/jacoco/index.html`.
 
 Distribuição dos 129 testes (contando cada execução de teste parametrizado):
 
